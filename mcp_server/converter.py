@@ -296,6 +296,11 @@ class Converter:
             engine, _ = self.choose_engine(src, auto=False)
         if engine not in ENGINES:
             raise ConversionError(f"engine must be one of {ENGINES}")
+        is_epub = src.suffix.lower() == ".epub"
+        if is_epub != (engine == "pandoc"):
+            raise ConversionError(
+                f"engine {engine} does not fit {src.suffix}: use pandoc for .epub, pymupdf4llm or doc2x for .pdf"
+            )
         target = src.with_suffix(".md")
         if target.exists() and not overwrite:
             raise ConversionError(f"target exists: {target} (use overwrite=true)")

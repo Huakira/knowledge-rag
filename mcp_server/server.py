@@ -5479,6 +5479,90 @@ def reindex_documents(
 
 @mcp.tool()
 @rate_limited
+@instrument("list_conversions")
+def list_conversions() -> str:
+    """
+    List PDF/EPUB -> Markdown conversions recorded in the conversion ledger.
+
+    Each entry: source_path, md_path, tool (pymupdf4llm | doc2x | pandoc | "-"), status
+    ("done" or "target_exists" when a Markdown file with the same name was already there),
+    converted_at (unix time), and whether the source and the Markdown file still exist.
+    Conversions that FAILED are not in this list: they appear in get_reindex_status
+    (last_result.failed_files) with the reason, and are retried on the next scan.
+    Converted-once sources are never converted again automatically; use convert() with
+    overwrite=true to redo one.
+    """
+    orchestrator = get_orchestrator()
+    if orchestrator.converter is None:
+        return json.dumps({"status": "error", "error": "conversion is disabled"})
+    rows = orchestrator.converter.report()
+    return json.dumps({"status": "success", "count": len(rows), "conversions": rows}, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+@rate_limited
+@instrument("convert")
+def convert(path: str, engine: str = "", overwrite: bool = False) -> str:
+    """
+    Convert one PDF or EPUB under the documents directory to Markdown (same directory, same name).
+
+    Args:
+        path: Path of the .pdf or .epub file (inside the documents directory).
+        engine: "pymupdf4llm" (local, text-layer PDFs), "doc2x" (cloud OCR, scanned PDFs or
+            bad layouts; uses paid page quota), "pandoc" (EPUB). Empty = automatic choice.
+        overwrite: Replace an existing Markdown file. Default false: an existing file is never touched.
+
+    Use this to retry a failed conversion with a different engine, or to force a re-conversion.
+    Returns the Markdown path and engine. A background reindex is started afterwards so the new
+    Markdown becomes searchable.
+    """
+    orchestrator = get_orchestrator()
+    if orchestrator.converter is None:
+        return json.dumps({"status": "error", "error": "conversion is disabled"})
+    try:
+        resolved = validate_path_within(config.documents_dir, path)
+    except PathEscapeError as exc:
+        return json.dumps({"status": "error", "error": f"Path rejected: {exc}"})
+    from .converter import ConversionError
+
+    try:
+        result = orchestrator.converter.convert(resolved, engine=engine or None, overwrite=overwrite)
+    except ConversionError as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
+    try:
+        orchestrator.start_reindex_background("incremental")
+        result["reindex"] = "started"
+    except Exception as exc:  # noqa: BLE001
+        result["reindex"] = f"not started: {exc}"
+    return json.dumps({"status": "success", **result}, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+@rate_limited
+@instrument("forget_conversion")
+def forget_conversion(path: str) -> str:
+    """
+    Remove the ledger entry of a converted source so it will be converted again on the next scan.
+
+    Does not delete any file. If the Markdown still exists the next scan will skip it
+    (existing files are never overwritten); delete or rename the Markdown yourself first,
+    or use convert(path, overwrite=true) instead.
+    """
+    orchestrator = get_orchestrator()
+    if orchestrator.converter is None:
+        return json.dumps({"status": "error", "error": "conversion is disabled"})
+    try:
+        resolved = validate_path_within(config.documents_dir, path)
+    except PathEscapeError as exc:
+        return json.dumps({"status": "error", "error": f"Path rejected: {exc}"})
+    if not resolved.is_file():
+        return json.dumps({"status": "error", "error": "source file not found (ledger is keyed by file content)"})
+    removed = orchestrator.converter.ledger.forget(orchestrator.converter.source_hash(resolved))
+    return json.dumps({"status": "success", "removed": removed})
+
+
+@mcp.tool()
+@rate_limited
 @instrument("get_reindex_status")
 def get_reindex_status() -> str:
     """
