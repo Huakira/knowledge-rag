@@ -830,8 +830,10 @@ class Config:
     transport: str = field(default_factory=lambda: _get("server", "transport", "stdio"))
     server_host: str = field(default_factory=lambda: _get("server", "host", "127.0.0.1"))
     server_port: int = field(default_factory=lambda: _get("server", "port", 8179))
+    # Fork: env var KNOWLEDGE_RAG_BEARER_TOKEN wins over YAML so the secret stays out of config files.
     auth_bearer_token: str = field(
-        default_factory=lambda: (
+        default_factory=lambda: os.environ.get("KNOWLEDGE_RAG_BEARER_TOKEN", "").strip()
+        or (
             _get("server", "auth", {}).get("bearer_token", "") if isinstance(_get("server", "auth", {}), dict) else ""
         )
     )
