@@ -476,18 +476,24 @@ server:
 
 
 # ----------------------------------------------------------------------------
-# FORK: API embeddings (OpenAI-compatible). Key comes from the env var named by
-# api_key_env, never from this file. Changing provider/model/dimensions makes
-# the server rebuild the index at startup (embedding signature check).
+# FORK: deployment settings live in environment variables (e.g. an .env file loaded
+# by the service launcher), not in this file. Precedence: env > this file > default.
+# Nothing provider-specific is built in: any OpenAI-compatible endpoint works.
+#
+#   KNOWLEDGE_RAG_DOCUMENTS_DIR          directory to index and watch
+#   KNOWLEDGE_RAG_BEARER_TOKEN           auth token for the HTTP transport
+#   KNOWLEDGE_RAG_ALLOWED_HOSTS          comma-separated Host names accepted behind a reverse proxy
+#   KNOWLEDGE_RAG_EMBEDDING_BASE_URL     setting it switches embeddings from local FastEmbed to the API
+#   KNOWLEDGE_RAG_EMBEDDING_API_KEY
+#   KNOWLEDGE_RAG_EMBEDDING_MODEL
+#   KNOWLEDGE_RAG_EMBEDDING_DIMENSIONS
+#   KNOWLEDGE_RAG_EMBEDDING_SEND_DIMENSIONS   true/false; false for models without the parameter
+#   KNOWLEDGE_RAG_RERANKER_ENABLED       true/false
+#   KNOWLEDGE_RAG_RERANKER_MODEL
+#   KNOWLEDGE_RAG_RERANKER_BASE_URL      optional; defaults to the embedding base URL
+#   KNOWLEDGE_RAG_RERANKER_API_KEY       optional; defaults to the embedding key
+#
+# Changing the embedding model or dimensions makes the server rebuild the index at startup
+# (embedding signature check). Optional tuning (models.embedding.api_batch_size / timeout /
+# max_retries) can stay in this file.
 # ----------------------------------------------------------------------------
-# models:
-#   embedding:
-#     provider: api                       # "fastembed" (default, local ONNX) | "api"
-#     base_url: https://api.siliconflow.cn/v1
-#     api_key_env: SILICONFLOW_API_KEY
-#     model: Qwen/Qwen3-Embedding-8B
-#     dimensions: 1024
-#     send_dimensions: true               # false for models without the parameter (bge-m3)
-#     api_batch_size: 32
-#     timeout: 60
-#     max_retries: 5

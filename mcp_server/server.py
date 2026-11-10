@@ -972,7 +972,7 @@ class FastEmbedEmbeddings:
 
 
 class ApiEmbeddings:
-    """OpenAI-compatible embeddings over HTTP (SiliconFlow etc.).
+    """OpenAI-compatible embeddings over HTTP.
 
     Same interface as FastEmbedEmbeddings: __call__ (passages), embed_query,
     embed_documents, name(). Keep-alive session, batching, retry with backoff
@@ -985,11 +985,11 @@ class ApiEmbeddings:
         self.model_name = model or config.embedding_model
         self._dim = config.embedding_dim
         self._url = config.embedding_base_url + "/embeddings"
-        key = os.environ.get(config.embedding_api_key_env, "").strip()
+        key = config.embedding_api_key
         if not key:
-            raise EmbeddingModelLoadError(
-                f"API embeddings need env var {config.embedding_api_key_env} (API key) to be set"
-            )
+            raise EmbeddingModelLoadError("API embeddings need KNOWLEDGE_RAG_EMBEDDING_API_KEY to be set")
+        if not config.embedding_model_explicit:
+            raise EmbeddingModelLoadError("API embeddings need KNOWLEDGE_RAG_EMBEDDING_MODEL (and _DIMENSIONS) to be set")
         self._session = requests.Session()
         self._session.headers.update({"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
         self._lock = threading.Lock()
@@ -1155,7 +1155,7 @@ class CrossEncoderReranker:
 
 
 class ApiReranker:
-    """Reranker over an HTTP /rerank endpoint (SiliconFlow / Jina / Cohere compatible).
+    """Reranker over an HTTP /rerank endpoint.
 
     Same ``rerank(query, documents, top_k)`` interface as CrossEncoderReranker.
     On any failure the RRF order is kept (never breaks search).
@@ -1166,13 +1166,15 @@ class ApiReranker:
 
         self.model_name = model or config.reranker_model
         self._url = config.reranker_base_url + "/rerank"
-        key = os.environ.get(config.embedding_api_key_env, "").strip()
+        key = config.reranker_api_key
         self._session = requests.Session()
         if key:
             self._session.headers.update({"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
         else:
-            print(f"[WARN] Reranker API key env {config.embedding_api_key_env} is not set; rerank disabled", file=sys.stderr)
-        self._has_key = bool(key)
+            print("[WARN] Reranker API key (KNOWLEDGE_RAG_RERANKER_API_KEY / _EMBEDDING_API_KEY) is not set; rerank disabled", file=sys.stderr)
+        self._has_key = bool(key) and config.reranker_model_explicit
+        if key and not config.reranker_model_explicit:
+            print("[WARN] API reranker needs KNOWLEDGE_RAG_RERANKER_MODEL; rerank disabled", file=sys.stderr)
 
     def rerank(self, query: str, documents: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
         if not documents or not config.reranker_enabled or not self._has_key:

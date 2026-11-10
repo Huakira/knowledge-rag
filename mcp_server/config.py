@@ -169,6 +169,27 @@ def _get_nested(section: str, subsection: str, key: str, default):
     return val
 
 
+def _env(name: str) -> str:
+    """Stripped env var value, "" when unset."""
+    return os.environ.get(name, "").strip()
+
+
+def _env_bool(name: str):
+    """True/False for a set env var (1/true/yes/on), None when unset."""
+    raw = _env(name).lower()
+    if not raw:
+        return None
+    return raw in ("1", "true", "yes", "on")
+
+
+def _reranker_yaml(key: str, default):
+    models = _yaml.get("models", {})
+    rr = models.get("reranker", {}) if isinstance(models, dict) else {}
+    if isinstance(rr, dict) and rr.get(key) is not None:
+        return rr[key]
+    return default
+
+
 def _embedding_yaml(key: str, default):
     """Read models.embedding.<key> from YAML (fork: API embedding settings)."""
     models = _yaml.get("models", {})
@@ -599,37 +620,31 @@ class Config:
 
     # Embeddings
     embedding_model: str = field(
-        default_factory=lambda: (
-            _get("models", "embedding", {}).get("model", "BAAI/bge-small-en-v1.5")
-            if isinstance(_get("models", "embedding", {}), dict)
-            else "BAAI/bge-small-en-v1.5"
-        )
+        default_factory=lambda: _env("KNOWLEDGE_RAG_EMBEDDING_MODEL")
+        or str(_embedding_yaml("model", "BAAI/bge-small-en-v1.5"))
+    )
+    embedding_model_explicit: bool = field(
+        default_factory=lambda: bool(_env("KNOWLEDGE_RAG_EMBEDDING_MODEL") or _embedding_yaml("model", None))
     )
     embedding_dim: int = field(
-        default_factory=lambda: (
-            _get("models", "embedding", {}).get("dimensions", 384)
-            if isinstance(_get("models", "embedding", {}), dict)
-            else 384
-        )
+        default_factory=lambda: int(_env("KNOWLEDGE_RAG_EMBEDDING_DIMENSIONS") or _embedding_yaml("dimensions", 384))
     )
-    # API reranker (fork): provider "fastembed" (local cross-encoder) or "api" (POST {base_url}/rerank)
-    reranker_provider: str = field(
-        default_factory=lambda: str(
-            (_yaml.get("models", {}).get("reranker", {}) if isinstance(_yaml.get("models", {}), dict) else {}).get(
-                "provider", "fastembed"
-            )
-        ).lower()
-    )
+    # API reranker (fork): endpoint is POST {base_url}/rerank. Own settings fall back to the embedding ones.
     reranker_base_url: str = field(
         default_factory=lambda: (
-            os.environ.get("KNOWLEDGE_RAG_RERANKER_BASE_URL", "").strip()
-            or os.environ.get("KNOWLEDGE_RAG_EMBEDDING_BASE_URL", "").strip()
-            or str(
-                (_yaml.get("models", {}).get("reranker", {}) if isinstance(_yaml.get("models", {}), dict) else {}).get(
-                    "base_url", "https://api.siliconflow.cn/v1"
-                )
-            )
-        ).rstrip("/")
+            _env("KNOWLEDGE_RAG_RERANKER_BASE_URL")
+            or str(_reranker_yaml("base_url", ""))
+            or _env("KNOWLEDGE_RAG_EMBEDDING_BASE_URL")
+            or str(_embedding_yaml("base_url", ""))
+        )
+        .strip()
+        .rstrip("/")
+    )
+    reranker_api_key: str = field(
+        default_factory=lambda: _env("KNOWLEDGE_RAG_RERANKER_API_KEY") or _env("KNOWLEDGE_RAG_EMBEDDING_API_KEY")
+    )
+    reranker_model_explicit: bool = field(
+        default_factory=lambda: bool(_env("KNOWLEDGE_RAG_RERANKER_MODEL") or _reranker_yaml("model", None))
     )
     reranker_timeout: float = field(default_factory=lambda: float(_get("models", "reranker_timeout", 30)))
     # Conversion (fork): PDF/EPUB -> Markdown next to the source (see converter.py)
@@ -646,20 +661,16 @@ class Config:
     watch_debounce_seconds: float = field(
         default_factory=lambda: float(_get("documents", "watch_debounce_seconds", 10))
     )
-    # API embeddings (fork): provider "fastembed" (local ONNX, default) or "api"
-    # (OpenAI-compatible /embeddings endpoint such as SiliconFlow).
-    embedding_provider: str = field(
-        default_factory=lambda: str(_embedding_yaml("provider", "fastembed")).lower()
-    )
+    # API embeddings (fork): any OpenAI-compatible /embeddings endpoint. Setting a base URL switches
+    # embeddings from the local FastEmbed model to the API. Nothing provider-specific is hardcoded.
     embedding_base_url: str = field(
         default_factory=lambda: (
-            os.environ.get("KNOWLEDGE_RAG_EMBEDDING_BASE_URL", "").strip()
-            or str(_embedding_yaml("base_url", "https://api.siliconflow.cn/v1"))
-        ).rstrip("/")
+            _env("KNOWLEDGE_RAG_EMBEDDING_BASE_URL") or str(_embedding_yaml("base_url", ""))
+        )
+        .strip()
+        .rstrip("/")
     )
-    embedding_api_key_env: str = field(
-        default_factory=lambda: str(_embedding_yaml("api_key_env", "SILICONFLOW_API_KEY"))
-    )
+    embedding_api_key: str = field(default_factory=lambda: _env("KNOWLEDGE_RAG_EMBEDDING_API_KEY"))
     embedding_api_batch_size: int = field(
         default_factory=lambda: int(_embedding_yaml("api_batch_size", 32))
     )
@@ -669,10 +680,23 @@ class Config:
     embedding_max_retries: int = field(
         default_factory=lambda: int(_embedding_yaml("max_retries", 5))
     )
-    # Send the "dimensions" parameter (Matryoshka truncation). bge-m3 does not support it.
+    # Send the "dimensions" parameter (Matryoshka truncation); models without it (e.g. bge-m3) need false.
     embedding_send_dimensions: bool = field(
-        default_factory=lambda: bool(_embedding_yaml("send_dimensions", False))
+        default_factory=lambda: (
+            _env_bool("KNOWLEDGE_RAG_EMBEDDING_SEND_DIMENSIONS")
+            if _env_bool("KNOWLEDGE_RAG_EMBEDDING_SEND_DIMENSIONS") is not None
+            else bool(_embedding_yaml("send_dimensions", False))
+        )
     )
+
+    @property
+    def embedding_provider(self) -> str:
+        return "api" if self.embedding_base_url else "fastembed"
+
+    @property
+    def reranker_provider(self) -> str:
+        return "api" if self.reranker_base_url else "fastembed"
+
     # GPU acceleration mode: "auto" (default) | "true" | "false" | "directml".
     # Legacy YAML `gpu: true/false` (bool) is normalized to string in __post_init__.
     #   "auto"  — probe CUDA on first embedding; fall back to CPU if unavailable
@@ -727,17 +751,14 @@ class Config:
 
     # Reranker
     reranker_model: str = field(
-        default_factory=lambda: (
-            _get("models", "reranker", {}).get("model", "Xenova/ms-marco-MiniLM-L-6-v2")
-            if isinstance(_get("models", "reranker", {}), dict)
-            else "Xenova/ms-marco-MiniLM-L-6-v2"
-        )
+        default_factory=lambda: _env("KNOWLEDGE_RAG_RERANKER_MODEL")
+        or str(_reranker_yaml("model", "Xenova/ms-marco-MiniLM-L-6-v2"))
     )
     reranker_enabled: bool = field(
         default_factory=lambda: (
-            _get("models", "reranker", {}).get("enabled", True)
-            if isinstance(_get("models", "reranker", {}), dict)
-            else True
+            _env_bool("KNOWLEDGE_RAG_RERANKER_ENABLED")
+            if _env_bool("KNOWLEDGE_RAG_RERANKER_ENABLED") is not None
+            else _reranker_yaml("enabled", True)
         )
     )
     reranker_top_k_multiplier: int = field(
@@ -850,7 +871,13 @@ class Config:
     # Fork: extra Host names accepted behind a reverse proxy (DNS-rebinding allowlist), e.g. ["rag.example.com"].
     server_allowed_hosts: List[str] = field(
         default_factory=lambda: [
-            str(h) for h in (_get("server", "allowed_hosts", []) or []) if isinstance(h, str) and h.strip()
+            str(h).strip()
+            for h in (
+                [x for x in _env("KNOWLEDGE_RAG_ALLOWED_HOSTS").split(",")]
+                if _env("KNOWLEDGE_RAG_ALLOWED_HOSTS")
+                else (_get("server", "allowed_hosts", []) or [])
+            )
+            if isinstance(h, str) and h.strip()
         ]
     )
     rate_limit_enabled: bool = field(
