@@ -572,7 +572,10 @@ class Config:
         default_factory=lambda: _resolve_path(_get("paths", "data_dir", None), BASE_DIR / "data") / "chroma_db"
     )
     documents_dir: Path = field(
-        default_factory=lambda: _resolve_path(_get("paths", "documents_dir", None), BASE_DIR / "documents")
+        default_factory=lambda: _resolve_path(
+            os.environ.get("KNOWLEDGE_RAG_DOCUMENTS_DIR", "").strip() or _get("paths", "documents_dir", None),
+            BASE_DIR / "documents",
+        )
     )
     models_cache_dir: Path = field(
         default_factory=lambda: _resolve_path(_get("paths", "models_cache_dir", None), BASE_DIR / "models_cache")
@@ -618,9 +621,13 @@ class Config:
         ).lower()
     )
     reranker_base_url: str = field(
-        default_factory=lambda: str(
-            (_yaml.get("models", {}).get("reranker", {}) if isinstance(_yaml.get("models", {}), dict) else {}).get(
-                "base_url", "https://api.siliconflow.cn/v1"
+        default_factory=lambda: (
+            os.environ.get("KNOWLEDGE_RAG_RERANKER_BASE_URL", "").strip()
+            or os.environ.get("KNOWLEDGE_RAG_EMBEDDING_BASE_URL", "").strip()
+            or str(
+                (_yaml.get("models", {}).get("reranker", {}) if isinstance(_yaml.get("models", {}), dict) else {}).get(
+                    "base_url", "https://api.siliconflow.cn/v1"
+                )
             )
         ).rstrip("/")
     )
@@ -645,7 +652,10 @@ class Config:
         default_factory=lambda: str(_embedding_yaml("provider", "fastembed")).lower()
     )
     embedding_base_url: str = field(
-        default_factory=lambda: str(_embedding_yaml("base_url", "https://api.siliconflow.cn/v1")).rstrip("/")
+        default_factory=lambda: (
+            os.environ.get("KNOWLEDGE_RAG_EMBEDDING_BASE_URL", "").strip()
+            or str(_embedding_yaml("base_url", "https://api.siliconflow.cn/v1"))
+        ).rstrip("/")
     )
     embedding_api_key_env: str = field(
         default_factory=lambda: str(_embedding_yaml("api_key_env", "SILICONFLOW_API_KEY"))
