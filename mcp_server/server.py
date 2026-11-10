@@ -6107,7 +6107,21 @@ def _run_transport(transport: str) -> None:
     # host="127.0.0.1", which turns on a localhost-only DNS-rebinding allowlist;
     # without this, a non-loopback server_host is served by uvicorn but the app
     # rejects the configured host with 421 before auth runs (GH #174).
-    app = app_factory(host=config.server_host)
+    kwargs: Dict[str, Any] = {"host": config.server_host}
+    if config.server_allowed_hosts:
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        extra = config.server_allowed_hosts
+        kwargs["transport_security"] = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *extra, *[f"{h}:*" for h in extra]],
+            allowed_origins=[
+                "http://127.0.0.1:*",
+                "http://localhost:*",
+                *[f"https://{h}" for h in extra],
+            ],
+        )
+    app = app_factory(**kwargs)
 
     if not token:
         print(

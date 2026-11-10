@@ -837,6 +837,12 @@ class Config:
             _get("server", "auth", {}).get("bearer_token", "") if isinstance(_get("server", "auth", {}), dict) else ""
         )
     )
+    # Fork: extra Host names accepted behind a reverse proxy (DNS-rebinding allowlist), e.g. ["rag.example.com"].
+    server_allowed_hosts: List[str] = field(
+        default_factory=lambda: [
+            str(h) for h in (_get("server", "allowed_hosts", []) or []) if isinstance(h, str) and h.strip()
+        ]
+    )
     rate_limit_enabled: bool = field(
         default_factory=lambda: (
             _get("server", "rate_limit", {}).get("enabled", False)
