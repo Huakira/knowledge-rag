@@ -1661,7 +1661,14 @@ class DocumentWatcher(FileSystemEventHandler):
         p = Path(path)
         if p.name.startswith((".rag-pending-", "~$")):  # staging file or Office owner file
             return False
-        return p.suffix.lower() in config.supported_formats or p.name in config.supported_formats
+        if config.exclude_patterns and DocumentParser._should_exclude(p, config.documents_dir, config.exclude_patterns):
+            return False
+        suffix = p.suffix.lower()
+        return (
+            suffix in config.supported_formats
+            or p.name in config.supported_formats
+            or suffix in config.convertible_formats
+        )
 
     def _is_real_change(self, src_path: str) -> bool:
         """Drop ATTRIB-only events by comparing on-disk (mtime, size) to last-indexed state.
@@ -2279,7 +2286,7 @@ class KnowledgeOrchestrator:
                     if existing:
                         self._evict_stale_doc(existing, stats)
                     else:
-                        stats["skipped"] += 1
+                        self._record_failed_file(stats, str(source), "no extractable text (empty content)")
                     if repair_ids is not None:
                         tracking["repaired_sources"].add(str(source.resolve()))
                     return

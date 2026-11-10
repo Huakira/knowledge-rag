@@ -17,49 +17,15 @@ import yaml
 _source_dir = Path(__file__).parent.parent
 
 
-_SUPPORTED_SUFFIXES = frozenset(
-    [
-        ".md",
-        ".txt",
-        ".pdf",
-        ".py",
-        ".c",
-        ".h",
-        ".cpp",
-        ".js",
-        ".jsx",
-        ".ts",
-        ".tsx",
-        ".json",
-        ".xml",
-        ".docx",
-        ".xlsx",
-        ".pptx",
-        ".csv",
-        ".ipynb",
-        ".go",
-        ".rs",
-        ".yaml",
-        ".yml",
-        ".hujson",
-        ".cue",
-        ".proto",
-        ".rego",
-        ".kt",
-        ".sql",
-        ".sh",
-        ".jq",
-    ]
-)
+# Fork: indexed formats are plain-text-like or Office documents only.
+# .pdf/.epub are conversion inputs (convertible_formats), never indexed.
+_SUPPORTED_SUFFIXES = frozenset([".md", ".txt", ".csv", ".docx", ".pptx"])
 
-# Extensionless files matched by exact filename instead of suffix
-_SUPPORTED_FILENAMES = frozenset(
-    [
-        "Dockerfile",
-        "Makefile",
-        "Tiltfile",
-    ]
-)
+# Formats converted to Markdown next to the source file (stage 3), not indexed.
+_CONVERTIBLE_SUFFIXES = frozenset([".pdf", ".epub"])
+
+# Extensionless files matched by exact filename (none in this fork)
+_SUPPORTED_FILENAMES = frozenset()
 
 # Canonical default for Config.supported_formats — suffixes plus exact filenames
 _DEFAULT_SUPPORTED_FORMATS = sorted(_SUPPORTED_SUFFIXES) + sorted(_SUPPORTED_FILENAMES)
@@ -774,7 +740,11 @@ class Config:
     )
 
     # Exclude patterns for directory traversal
-    exclude_patterns: List[str] = field(default_factory=lambda: _get("documents", "exclude_patterns", []))
+    # Fork: hidden files/dirs (.agentero, .trash, .git ...) are excluded by default.
+    exclude_patterns: List[str] = field(default_factory=lambda: _get("documents", "exclude_patterns", [".*"]))
+    convertible_formats: List[str] = field(
+        default_factory=lambda: _get("documents", "convertible_formats", sorted(_CONVERTIBLE_SUFFIXES))
+    )
 
     # Category mappings
     category_mappings: Dict[str, str] = field(

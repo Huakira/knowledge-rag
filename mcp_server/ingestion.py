@@ -247,39 +247,9 @@ class DocumentParser:
         self._parsers = {
             ".md": self._parse_markdown,
             ".txt": self._parse_text,
-            ".pdf": self._parse_pdf,
-            ".py": self._parse_code,
-            ".c": self._parse_code,
-            ".h": self._parse_code,
-            ".cpp": self._parse_code,
-            ".js": self._parse_code,
-            ".jsx": self._parse_code,
-            ".ts": self._parse_code,
-            ".tsx": self._parse_code,
-            ".json": self._parse_json,
-            ".xml": self._parse_xml,
             ".docx": self._parse_docx,
-            ".xlsx": self._parse_xlsx,
             ".pptx": self._parse_pptx,
             ".csv": self._parse_csv,
-            ".ipynb": self._parse_ipynb,
-            ".mqh": self._parse_code,
-            ".mq4": self._parse_code,
-            ".go": self._parse_code_generic,
-            ".rs": self._parse_code_generic,
-            ".yaml": self._parse_yaml,
-            ".yml": self._parse_yaml,
-            ".hujson": self._parse_hujson,
-            ".cue": self._parse_code_generic,
-            ".proto": self._parse_proto,
-            ".rego": self._parse_code_generic,
-            ".kt": self._parse_code_generic,
-            ".sql": self._parse_sql,
-            ".sh": self._parse_shell,
-            ".jq": self._parse_shell,
-            "Dockerfile": self._parse_text,
-            "Makefile": self._parse_text,
-            "Tiltfile": self._parse_code_generic,
         }
 
     def _select_parser_key(self, filepath: Path, logical_filename: Optional[str]) -> str:
@@ -317,8 +287,6 @@ class DocumentParser:
 
         # Parse content and metadata
         content, metadata = self._parsers[key](readable_path)
-        if key == "Tiltfile":
-            metadata["language"] = "starlark"
         marker = detect_external_marker(content)
         provenance = {"external_source": True, "external_source_uri": marker[0]} if marker else {}
         metadata.update(provenance)
@@ -345,7 +313,7 @@ class DocumentParser:
         )
 
         # Chunk the content (markdown-aware for .md files)
-        if key == ".md":
+        if key in (".md", ".docx"):
             doc.chunks = self._chunk_markdown(content, metadata)
         else:
             doc.chunks = self._chunk_text(content, metadata)
