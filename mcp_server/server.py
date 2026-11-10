@@ -1154,6 +1154,56 @@ class CrossEncoderReranker:
         return documents[:top_k]
 
 
+class ApiReranker:
+    """Reranker over an HTTP /rerank endpoint (SiliconFlow / Jina / Cohere compatible).
+
+    Same ``rerank(query, documents, top_k)`` interface as CrossEncoderReranker.
+    On any failure the RRF order is kept (never breaks search).
+    """
+
+    def __init__(self, model: str = None):
+        import requests
+
+        self.model_name = model or config.reranker_model
+        self._url = config.reranker_base_url + "/rerank"
+        key = os.environ.get(config.embedding_api_key_env, "").strip()
+        self._session = requests.Session()
+        if key:
+            self._session.headers.update({"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        else:
+            print(f"[WARN] Reranker API key env {config.embedding_api_key_env} is not set; rerank disabled", file=sys.stderr)
+        self._has_key = bool(key)
+
+    def rerank(self, query: str, documents: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
+        if not documents or not config.reranker_enabled or not self._has_key:
+            return documents[:top_k]
+        texts = [doc.get("document", "") or " " for doc in documents]
+        payload = {"model": self.model_name, "query": query, "documents": texts, "top_n": len(texts)}
+        for attempt in range(3):
+            try:
+                resp = self._session.post(self._url, json=payload, timeout=config.reranker_timeout)
+                if resp.status_code == 200:
+                    for item in resp.json().get("results", []):
+                        idx = item.get("index")
+                        if isinstance(idx, int) and 0 <= idx < len(documents):
+                            documents[idx]["reranker_score"] = float(item.get("relevance_score", 0.0))
+                    documents.sort(key=lambda x: x.get("reranker_score", 0), reverse=True)
+                    return documents[:top_k]
+                if resp.status_code not in (429, 500, 502, 503, 504):
+                    print(f"[WARN] Rerank API HTTP {resp.status_code}: {resp.text[:150]}; using RRF order", file=sys.stderr)
+                    break
+            except Exception as exc:  # noqa: BLE001
+                print(f"[WARN] Rerank API error: {exc}", file=sys.stderr)
+            time.sleep(1.5 * (attempt + 1))
+        return documents[:top_k]
+
+
+def make_reranker():
+    if config.reranker_provider == "api":
+        return ApiReranker()
+    return CrossEncoderReranker()
+
+
 def _metadata_path_score(query: str, metadata: Dict[str, Any]) -> float:
     """Return a small generic score boost when query terms match path metadata."""
     query_terms = re.findall(r"[^\W_]+(?:-[^\W_]+)*", query.lower())
@@ -1831,7 +1881,7 @@ class KnowledgeOrchestrator:
         self._bm25_build_lock = threading.Lock()
 
         # Cross-encoder reranker (lazy-loaded on first query)
-        self.reranker = CrossEncoderReranker()
+        self.reranker = make_reranker()
 
         # Query cache (LRU with TTL)
         self.query_cache = QueryCache(max_size=100, ttl_seconds=300)

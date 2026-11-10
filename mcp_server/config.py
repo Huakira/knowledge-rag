@@ -609,6 +609,22 @@ class Config:
             else 384
         )
     )
+    # API reranker (fork): provider "fastembed" (local cross-encoder) or "api" (POST {base_url}/rerank)
+    reranker_provider: str = field(
+        default_factory=lambda: str(
+            (_yaml.get("models", {}).get("reranker", {}) if isinstance(_yaml.get("models", {}), dict) else {}).get(
+                "provider", "fastembed"
+            )
+        ).lower()
+    )
+    reranker_base_url: str = field(
+        default_factory=lambda: str(
+            (_yaml.get("models", {}).get("reranker", {}) if isinstance(_yaml.get("models", {}), dict) else {}).get(
+                "base_url", "https://api.siliconflow.cn/v1"
+            )
+        ).rstrip("/")
+    )
+    reranker_timeout: float = field(default_factory=lambda: float(_get("models", "reranker_timeout", 30)))
     # Conversion (fork): PDF/EPUB -> Markdown next to the source (see converter.py)
     conversion_enabled: bool = field(default_factory=lambda: bool(_get("conversion", "enabled", True)))
     conversion_min_age_seconds: float = field(
