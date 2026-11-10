@@ -473,3 +473,21 @@ server:
   metrics:
     enabled: false
     port: 9179
+
+
+# ----------------------------------------------------------------------------
+# FORK: API embeddings (OpenAI-compatible). Key comes from the env var named by
+# api_key_env, never from this file. Changing provider/model/dimensions makes
+# the server rebuild the index at startup (embedding signature check).
+# ----------------------------------------------------------------------------
+# models:
+#   embedding:
+#     provider: api                       # "fastembed" (default, local ONNX) | "api"
+#     base_url: https://api.siliconflow.cn/v1
+#     api_key_env: SILICONFLOW_API_KEY
+#     model: Qwen/Qwen3-Embedding-8B
+#     dimensions: 1024
+#     send_dimensions: true               # false for models without the parameter (bge-m3)
+#     api_batch_size: 32
+#     timeout: 60
+#     max_retries: 5

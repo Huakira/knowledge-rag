@@ -971,6 +971,102 @@ class FastEmbedEmbeddings:
         return self._embed(self._apply_prefix(texts, config.query_prefix))
 
 
+class ApiEmbeddings:
+    """OpenAI-compatible embeddings over HTTP (SiliconFlow etc.).
+
+    Same interface as FastEmbedEmbeddings: __call__ (passages), embed_query,
+    embed_documents, name(). Keep-alive session, batching, retry with backoff
+    on 429/5xx/network errors.
+    """
+
+    def __init__(self, model: str = None):
+        import requests
+
+        self.model_name = model or config.embedding_model
+        self._dim = config.embedding_dim
+        self._url = config.embedding_base_url + "/embeddings"
+        key = os.environ.get(config.embedding_api_key_env, "").strip()
+        if not key:
+            raise EmbeddingModelLoadError(
+                f"API embeddings need env var {config.embedding_api_key_env} (API key) to be set"
+            )
+        self._session = requests.Session()
+        self._session.headers.update({"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        self._lock = threading.Lock()
+
+    def _post(self, batch: List[str]) -> List[List[float]]:
+        import random
+        import requests
+
+        payload: Dict[str, Any] = {"model": self.model_name, "input": batch, "encoding_format": "float"}
+        if config.embedding_send_dimensions:
+            payload["dimensions"] = self._dim
+        last: Optional[str] = None
+        for attempt in range(config.embedding_max_retries + 1):
+            try:
+                with self._lock:
+                    resp = self._session.post(self._url, json=payload, timeout=config.embedding_timeout)
+                if resp.status_code == 200:
+                    data = resp.json().get("data") or []
+                    data = sorted(data, key=lambda d: d.get("index", 0))
+                    vectors = [d["embedding"] for d in data]
+                    if len(vectors) != len(batch):
+                        raise EmbeddingError(f"Embedding count mismatch: expected {len(batch)}, got {len(vectors)}")
+                    for v in vectors:
+                        if len(v) != self._dim:
+                            raise EmbeddingError(
+                                f"Embedding dim mismatch: expected {self._dim}, got {len(v)} "
+                                f"(model {self.model_name}); fix models.embedding.dimensions"
+                            )
+                    return vectors
+                last = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                if resp.status_code not in (408, 429, 500, 502, 503, 504):
+                    raise EmbeddingError(f"Embedding API error {last}")
+            except EmbeddingError:
+                raise
+            except (requests.RequestException, ValueError) as exc:
+                last = f"{type(exc).__name__}: {exc}"
+            if attempt < config.embedding_max_retries:
+                time.sleep(min(30.0, 1.5 * (2 ** attempt)) * (0.5 + random.random() / 2))
+        raise EmbeddingError(f"Embedding API failed after retries: {last}")
+
+    def _embed(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        size = max(1, min(config.embedding_api_batch_size, 512))
+        out: List[List[float]] = []
+        for i in range(0, len(texts), size):
+            out.extend(self._post([t if t.strip() else " " for t in texts[i : i + size]]))
+        return out
+
+    def __call__(self, input: List[str]) -> List[List[float]]:
+        if not input:
+            return []
+        return self._embed(FastEmbedEmbeddings._apply_prefix(input, config.passage_prefix))
+
+    def name(self) -> str:
+        return f"api-{self.model_name}-{self._dim}"
+
+    def embed_documents(self, documents: List[str]) -> List[List[float]]:
+        return self(documents)
+
+    def embed_query(self, input=None, **kwargs) -> List[List[float]]:
+        if isinstance(input, list):
+            texts = input
+        elif input is not None:
+            texts = [input]
+        else:
+            texts = [kwargs.get("query", "")]
+        return self._embed(FastEmbedEmbeddings._apply_prefix(texts, config.query_prefix))
+
+
+def make_embedding_function():
+    """Pick embedding backend from models.embedding.provider."""
+    if config.embedding_provider == "api":
+        return ApiEmbeddings()
+    return FastEmbedEmbeddings()
+
+
 # =============================================================================
 # CROSS-ENCODER RERANKER
 # =============================================================================
@@ -1697,7 +1793,7 @@ class KnowledgeOrchestrator:
         self._staging_target = None
 
         self.parser = DocumentParser()
-        self.embed_fn = FastEmbedEmbeddings()
+        self.embed_fn = make_embedding_function()
 
         # Initialize ChromaDB with persistent storage (new API v1.4.0+).
         # GH #200: WAL is toggled inside _init_chroma_client BEFORE the client
@@ -1824,6 +1920,21 @@ class KnowledgeOrchestrator:
         print("[RECOVERY] Recreating empty collection bound to Chroma's default embedding (GH #248)", file=sys.stderr)
         return True
 
+    def _embedding_signature_path(self) -> Path:
+        return config.data_dir / "embedding_signature.txt"
+
+    def _read_embedding_signature(self) -> Optional[str]:
+        try:
+            return self._embedding_signature_path().read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+
+    def _write_embedding_signature(self) -> None:
+        try:
+            self._embedding_signature_path().write_text(self.embed_fn.name() + "\n", encoding="utf-8")
+        except OSError as exc:
+            print(f"[WARN] Could not write embedding signature: {exc}", file=sys.stderr)
+
     def _check_dimension_mismatch(self) -> bool:
         """Check if stored embeddings have different dimension than current config.
 
@@ -1837,6 +1948,17 @@ class KnowledgeOrchestrator:
         """
         if self.collection.count() == 0:
             return False
+        # Fork: embedding signature (provider/model/dims). Same-dimension model
+        # swaps are otherwise invisible and silently mix incompatible vectors.
+        stored_sig = self._read_embedding_signature()
+        current_sig = self.embed_fn.name()
+        if stored_sig != current_sig:
+            print(
+                f"[MIGRATION] Embedding signature changed: stored={stored_sig!r} current={current_sig!r}",
+                file=sys.stderr,
+            )
+            print("[MIGRATION] Nuclear rebuild required.", file=sys.stderr)
+            return True
         # Fast path: check cached metadata (no embed, no model load)
         for entry in self._indexed_docs.values():
             cached_dim = entry.get("embedding_dim")
@@ -5912,6 +6034,8 @@ def main():
                     "[INFO] Initial indexing runs in background. Track progress with get_reindex_status.",
                     file=sys.stderr,
                 )
+
+            orchestrator._write_embedding_signature()
 
             # Start file watcher for auto-reindex on document changes
             if os.environ.get("KNOWLEDGE_RAG_WATCHER_DISABLED", "").strip() == "1":

@@ -203,6 +203,15 @@ def _get_nested(section: str, subsection: str, key: str, default):
     return val
 
 
+def _embedding_yaml(key: str, default):
+    """Read models.embedding.<key> from YAML (fork: API embedding settings)."""
+    models = _yaml.get("models", {})
+    emb = models.get("embedding", {}) if isinstance(models, dict) else {}
+    if isinstance(emb, dict) and emb.get(key) is not None:
+        return emb[key]
+    return default
+
+
 def _get_top(key: str, default):
     """Get a top-level value from YAML, falling back to default if missing or None."""
     val = _yaml.get(key)
@@ -633,6 +642,30 @@ class Config:
             if isinstance(_get("models", "embedding", {}), dict)
             else 384
         )
+    )
+    # API embeddings (fork): provider "fastembed" (local ONNX, default) or "api"
+    # (OpenAI-compatible /embeddings endpoint such as SiliconFlow).
+    embedding_provider: str = field(
+        default_factory=lambda: str(_embedding_yaml("provider", "fastembed")).lower()
+    )
+    embedding_base_url: str = field(
+        default_factory=lambda: str(_embedding_yaml("base_url", "https://api.siliconflow.cn/v1")).rstrip("/")
+    )
+    embedding_api_key_env: str = field(
+        default_factory=lambda: str(_embedding_yaml("api_key_env", "SILICONFLOW_API_KEY"))
+    )
+    embedding_api_batch_size: int = field(
+        default_factory=lambda: int(_embedding_yaml("api_batch_size", 32))
+    )
+    embedding_timeout: float = field(
+        default_factory=lambda: float(_embedding_yaml("timeout", 60))
+    )
+    embedding_max_retries: int = field(
+        default_factory=lambda: int(_embedding_yaml("max_retries", 5))
+    )
+    # Send the "dimensions" parameter (Matryoshka truncation). bge-m3 does not support it.
+    embedding_send_dimensions: bool = field(
+        default_factory=lambda: bool(_embedding_yaml("send_dimensions", False))
     )
     # GPU acceleration mode: "auto" (default) | "true" | "false" | "directml".
     # Legacy YAML `gpu: true/false` (bool) is normalized to string in __post_init__.
