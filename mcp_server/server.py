@@ -4699,6 +4699,7 @@ class KnowledgeOrchestrator:
     def get_stats(self) -> Dict[str, Any]:
         """Get index statistics including background reindex progress."""
         stats = {
+            "documents_dir": str(config.documents_dir),
             "total_documents": len(self._indexed_docs),
             "total_chunks": self.collection.count(),
             "categories": self.list_categories(),
@@ -5272,7 +5273,14 @@ def search_knowledge(
     exclude_folders: Optional[List[str]] = None,
 ) -> str:
     """
-    Hybrid search combining semantic search + BM25 keyword search with cross-encoder reranking.
+    Search the files and folders this server indexes (a document directory, typically synced
+    papers, notes and converted books; call get_index_stats() and read documents_dir to see which
+    directory). Use this FIRST whenever you need to understand, locate or read anything under that
+    directory, before ls/cat/grep. Results carry the source path; read the full file from there.
+    PDF and EPUB files have a Markdown copy next to them (same name, .md): read that, do not convert again.
+    Chinese and English queries both work, also across languages.
+
+    Hybrid search combining semantic search + BM25 keyword search with reranking.
 
     Read-only. No side effects.
 
