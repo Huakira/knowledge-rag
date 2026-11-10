@@ -5273,12 +5273,12 @@ def search_knowledge(
     exclude_folders: Optional[List[str]] = None,
 ) -> str:
     """
-    Search the files and folders this server indexes (a document directory, typically synced
-    papers, notes and converted books; call get_index_stats() and read documents_dir to see which
-    directory). Use this FIRST whenever you need to understand, locate or read anything under that
-    directory, before ls/cat/grep. Results carry the source path; read the full file from there.
-    PDF and EPUB files have a Markdown copy next to them (same name, .md): read that, do not convert again.
-    Chinese and English queries both work, also across languages.
+    Use this whenever you need to find, read or understand the user's files or folders (any path
+    the user mentions, on any machine). First call get_index_stats() and compare its documents_dir
+    with the path: if the path is inside documents_dir, search here BEFORE ls/cat/grep, then read the
+    full file from the source path in the results. If it is outside, this tool does not apply.
+    PDF and EPUB files have a Markdown copy next to them (same name, .md): read that, do not convert
+    again. Chinese and English queries both work, also across languages.
 
     Hybrid search combining semantic search + BM25 keyword search with reranking.
 
@@ -5730,6 +5730,10 @@ def list_documents(category: Optional[str] = None, limit: int = 100, offset: int
 @instrument("get_index_stats")
 def get_index_stats() -> str:
     """
+    Check this FIRST when the user's files or folders come up: documents_dir is the directory this
+    knowledge base indexes and watches. If the path you need to read or understand is inside it,
+    use search_knowledge instead of browsing the filesystem.
+
     Get statistics and health metrics for the knowledge base index.
 
     Read-only. No side effects.
