@@ -1800,6 +1800,21 @@ class KnowledgeOrchestrator:
         self._staging_target = None
 
         self.parser = DocumentParser()
+        self.converter = None
+        self._rescan_timer = None
+        if config.conversion_enabled:
+            from .converter import Converter
+
+            self.converter = Converter(
+                documents_dir=config.documents_dir,
+                data_dir=config.data_dir,
+                exclude_patterns=config.exclude_patterns,
+                convertible=config.convertible_formats,
+                min_age_seconds=config.conversion_min_age_seconds,
+                scanned_chars_per_page=config.conversion_scanned_chars_per_page,
+                doc2x_enabled=config.conversion_doc2x_enabled,
+                doc2x_max_pages=config.conversion_doc2x_max_pages,
+            )
         self.embed_fn = make_embedding_function()
 
         # Initialize ChromaDB with persistent storage (new API v1.4.0+).
@@ -2077,6 +2092,30 @@ class KnowledgeOrchestrator:
         finally:
             self._index_lock.release()
 
+    def _run_conversions(self, stats: Dict[str, Any]) -> None:
+        """Fork: convert new PDF/EPUB sources to Markdown before scanning for documents."""
+        if self.converter is None:
+            return
+        try:
+            summary = self.converter.run(lambda path, reason: self._record_failed_file(stats, path, reason))
+        except Exception as exc:  # noqa: BLE001 - conversion must never abort indexing
+            print(f"[CONVERT] Conversion pass failed: {exc}", file=sys.stderr)
+            return
+        if summary["converted"] or summary["failed"]:
+            print(f"[CONVERT] {summary}", file=sys.stderr)
+        stats["conversions"] = summary
+        if summary["deferred"]:
+            self._schedule_rescan(config.conversion_min_age_seconds + 2)
+
+    def _schedule_rescan(self, delay: float) -> None:
+        """Recently modified sources are skipped; look again once they have settled."""
+        timer = self._rescan_timer
+        if timer is not None and timer.is_alive():
+            return
+        self._rescan_timer = threading.Timer(delay, lambda: self.index_all(force=False))
+        self._rescan_timer.daemon = True
+        self._rescan_timer.start()
+
     def _index_all_impl(
         self,
         force: bool = False,
@@ -2084,6 +2123,7 @@ class KnowledgeOrchestrator:
     ) -> Dict[str, Any]:
         """Inner implementation of index_all (caller holds _index_lock)."""
         stats = self._init_index_stats()
+        self._run_conversions(stats)
         repairs = self._load_document_repairs()
         documents = self._scan_and_count_documents(stats)
         path_to_docid = self._build_path_to_docid_map()
@@ -6049,7 +6089,7 @@ def main():
                 print("[WATCHER] Disabled via KNOWLEDGE_RAG_WATCHER_DISABLED=1", file=sys.stderr)
             else:
                 try:
-                    watcher = DocumentWatcher(get_orchestrator, debounce_seconds=10.0)
+                    watcher = DocumentWatcher(get_orchestrator, debounce_seconds=config.watch_debounce_seconds)
                     observer = Observer()
                     observer.schedule(watcher, str(config.documents_dir), recursive=True)
                     observer.daemon = True

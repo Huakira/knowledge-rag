@@ -609,6 +609,20 @@ class Config:
             else 384
         )
     )
+    # Conversion (fork): PDF/EPUB -> Markdown next to the source (see converter.py)
+    conversion_enabled: bool = field(default_factory=lambda: bool(_get("conversion", "enabled", True)))
+    conversion_min_age_seconds: float = field(
+        default_factory=lambda: float(_get("conversion", "min_age_seconds", 30))
+    )
+    conversion_scanned_chars_per_page: float = field(
+        default_factory=lambda: float(_get("conversion", "scanned_chars_per_page", 50))
+    )
+    conversion_doc2x_enabled: bool = field(default_factory=lambda: bool(_get("conversion", "doc2x_enabled", True)))
+    conversion_doc2x_max_pages: int = field(default_factory=lambda: int(_get("conversion", "doc2x_max_pages", 500)))
+    # Watcher debounce (seconds of silence before a scan); original hardcoded 10.
+    watch_debounce_seconds: float = field(
+        default_factory=lambda: float(_get("documents", "watch_debounce_seconds", 10))
+    )
     # API embeddings (fork): provider "fastembed" (local ONNX, default) or "api"
     # (OpenAI-compatible /embeddings endpoint such as SiliconFlow).
     embedding_provider: str = field(
